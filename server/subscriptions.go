@@ -117,12 +117,46 @@ func (p *Plugin) Subscribe(ctx context.Context, githubClient *github.Client, use
 	return nil
 }
 
+// This function will get all repos in the given org and subcscribe to all of them
 func (p *Plugin) SubscribeOrg(ctx context.Context, githubClient *github.Client, userId, org, channelID, features string) error {
 	if org == "" {
 		return fmt.Errorf("Invalid organization")
 	}
+	if err := p.checkOrg(org); err != nil {
+		return err
+	}
 
-	return p.Subscribe(ctx, githubClient, userId, org, "", channelID, features)
+	opt := &github.RepositoryListByOrgOptions{
+		ListOptions: github.ListOptions{PerPage: 10},
+	}
+	// get all pages of results
+	var allRepos []*github.Repository
+	for {
+		repos, resp, err := githubClient.Repositories.ListByOrg(ctx, org, opt)
+		if err != nil {
+			return err
+		}
+		allRepos = append(allRepos, repos...)
+		if resp.NextPage == 0 {
+			break
+		}
+		opt.Page = resp.NextPage
+	}
+
+	for _, repo := range allRepos {
+		repoName := fmt.Sprintf("%s/%s", org, repo.GetFullName())
+		sub := &Subscription{
+			ChannelID:  channelID,
+			CreatorID:  userId,
+			Features:   features,
+			Repository: repoName,
+		}
+
+		if err := p.AddSubscription(repoName, sub); err != nil {
+			mlog.Error(err.Error())
+		}
+	}
+	return nil
 }
 
 func (p *Plugin) GetSubscriptionsByChannel(channelID string) ([]*Subscription, error) {
